@@ -1,0 +1,99 @@
+# POST endpoint /update with a JSON payload like {"products": ["123", "456"]}.
+# Api Gateway will send this payload to an SQS Queue.
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Api Gateway as a proxy to SQS.
+
+Transform:
+- AWS::Serverless-2016-10-31
+
+Resources:
+  SimpleQueue:
+    Type: AWS::SQS::Queue
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: SendMessageToSQSPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt SimpleQueue.Arn
+  
+  Api:
+    Type: "AWS::Serverless::Api"
+    DependsOn:
+      - ApiRole
+    Properties:
+      StageName: Prod
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          title: My app
+          description: My app again
+          version: 1.0
+        paths:
+          "/update":
+            post:
+              consumes:
+                - application/json
+              produces:
+                - application/json
+              parameters:
+                - in: body
+                  required: true
+                  name: payload
+                  description: The list of product codes to trigger
+                  schema:
+                    type: object
+                    properties:
+                      products:
+                        type: array
+                        items:
+                          type: string
+                    required:
+                      - "products"
+                    additionalProperties: false
+              x-amazon-apigateway-request-validator: "ValidateBody"
+              responses:
+                "202":
+                  description: on success
+                "400":
+                  description: invalid request body
+              x-amazon-apigateway-integration:
+                type: AWS
+                httpMethod: POST
+                passthroughBehavior: NEVER
+                requestParameters:
+                  integration.request.header.Content-Type: "'application/x-www-form-urlencoded'"
+                requestTemplates:
+                  "application/json": "Action=SendMessage&MessageBody=$input.body"
+                credentials: !GetAtt ApiRole.Arn
+                uri:
+                  !Sub "arn:aws:apigateway:${AWS::Region}:sqs:path/${AWS::AccountId}/${SimpleQueue.QueueName}"
+                responses:
+                  default:
+                    statusCode: "202"
+                    responseTemplates:
+                      application/json: '{"message": "Products sent for processing"}'
+        x-amazon-apigateway-request-validators:
+          ValidateBody:
+            validateRequestParameters: false
+            validateRequestBody: true
+        x-amazon-apigateway-gateway-responses:
+          BAD_REQUEST_BODY:
+            responseTemplates:
+              application/json: '{"error":{"message":"$context.error.messageString","errors":"$context.error.validationErrorString"}}'
