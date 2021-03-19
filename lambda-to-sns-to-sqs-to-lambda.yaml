@@ -1,0 +1,115 @@
+# POST endpoint /update with a JSON payload like {"products": ["123", "456"]}.
+# Api Gateway will send this payload to an SQS Queue.
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Lambda -> SNS -> SQS -> Lambda.
+
+Transform:
+- AWS::Serverless-2016-10-31
+
+Resources:
+  ProcessUpdates:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./dist
+      Handler: ProcessUpdates.default
+      Runtime: nodejs12.x
+      Timeout: 30
+      MemorySize: 128
+      Policies:
+        - AWSLambdaVPCAccessExecutionRole
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt DLProcessUpdates.QueueName
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - SNS:Publish
+              Resource: !Ref SNSProductUpdates
+
+  SendProductUpdatesToGoogle:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./dist
+      Handler: SendProductUpdatesToGoogle.default
+      Runtime: nodejs12.x
+      Timeout: 30
+      MemorySize: 128
+      Policies:
+        - AWSLambdaVPCAccessExecutionRole
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt DLSendProductUpdatesToGoogle.QueueName
+      Events:
+        ProductUpdateEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SQSSendProductUpdatesToGoogle.Arn
+
+  # SQS
+  SQSProcessUpdates:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      VisibilityTimeout: 30
+      RedrivePolicy:
+        maxReceiveCount: 5
+        deadLetterTargetArn:
+          Fn::GetAtt:
+            - "DLProcessUpdates"
+            - "Arn"
+
+  SQSSendProductUpdatesToGoogle:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 30
+      RedrivePolicy:
+        maxReceiveCount: 5
+        deadLetterTargetArn:
+          Fn::GetAtt:
+            - "DLSendProductUpdatesToGoogle"
+            - "Arn"
+
+  # DLQ
+  DLProcessUpdates:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      MessageRetentionPeriod: 1209600
+
+  DLSendProductUpdatesToGoogle:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      MessageRetentionPeriod: 1209600
+
+  # SNS
+  SNSProductUpdates:
+    Type: "AWS::SNS::Topic"
+
+  # Subscriptions
+  SNSSendProductUpdatesToGoogleSubscriber:
+    Type: "AWS::SNS::Subscription"
+    Properties:
+      TopicArn: !Ref SNSProductUpdates
+      Endpoint: !GetAtt SQSSendProductUpdatesToGoogle.Arn
+      Protocol: sqs
+      RawMessageDelivery: true
+
+  # Policies
+  SNStoBISQSPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref SQSSendProductUpdatesToGoogle
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: SNStoBISQSPolicy
+        Statement:
+          - Sid: SNSGoogleQueueSubscriptionPolicyStatement
+            Effect: Allow
+            Principal:
+              Service: "sns.amazonaws.com"
+            Action:
+              - sqs:SendMessage
+            Resource: !GetAtt SQSSendProductUpdatesToGoogle.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref SNSProductUpdates

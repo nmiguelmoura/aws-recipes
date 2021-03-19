@@ -1,0 +1,65 @@
+# POST endpoint /update with a JSON payload like {"products": ["123", "456"]}.
+# Api Gateway will send this payload to an SQS Queue.
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Lambda -> SQS -> Lambda.
+
+Transform:
+- AWS::Serverless-2016-10-31
+
+Resources:
+  PollChanges:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./dist
+      Handler: PollChanges.default
+      Runtime: nodejs12.x
+      Timeout: 30
+      MemorySize: 128
+      Policies:
+        - AWSLambdaVPCAccessExecutionRole
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt SQSProcessUpdates.QueueName
+      Events:
+        PollForUpdates:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+
+  ProcessUpdates:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./dist
+      Handler: ProcessUpdates.default
+      Runtime: nodejs12.x
+      Timeout: 30
+      MemorySize: 128
+      Policies:
+        - AWSLambdaVPCAccessExecutionRole
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt DLProcessUpdates.QueueName
+      Events:
+        ProcessUpdatesEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SQSProcessUpdates.Arn
+            BatchSize: 10
+
+  # SQS
+  SQSProcessUpdates:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      VisibilityTimeout: 30
+      RedrivePolicy:
+        maxReceiveCount: 5
+        deadLetterTargetArn:
+          Fn::GetAtt:
+            - "DLProcessUpdates"
+            - "Arn"
+
+  # DLQ
+  DLProcessUpdates:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      MessageRetentionPeriod: 1209600
