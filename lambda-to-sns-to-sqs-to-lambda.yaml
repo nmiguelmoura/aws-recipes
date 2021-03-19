@@ -18,7 +18,6 @@ Resources:
       Timeout: 30
       MemorySize: 128
       Policies:
-        - AWSLambdaVPCAccessExecutionRole
         - SQSSendMessagePolicy:
             QueueName: !GetAtt DLProcessUpdates.QueueName
         - Version: "2012-10-17"
@@ -37,7 +36,6 @@ Resources:
       Timeout: 30
       MemorySize: 128
       Policies:
-        - AWSLambdaVPCAccessExecutionRole
         - SQSSendMessagePolicy:
             QueueName: !GetAtt DLSendProductUpdatesToGoogle.QueueName
       Events:
